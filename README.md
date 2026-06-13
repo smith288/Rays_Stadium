@@ -4,6 +4,10 @@ A smart, Wi-Fi-enabled controller for a hacked **Tropicana Field "Light Up the D
 
 The device runs on a Seeed Studio XIAO ESP32-C6 and drives the original 4V light using an AO3400A MOSFET. It turns the light on after Rays wins, flashes it for home runs and final wins, and turns it off before first pitch.
 
+## In Action
+
+<img src="stadium.GIF" alt="Animated GIF of the hacked Tropicana Field 'Light Up the Dome' souvenir in action — the circular stadium light glowing and flashing as it celebrates a Tampa Bay Rays win or home run" width="540">
+
 ## The Hack
 
 This project started with the official **Rays "Light Up the Dome"** promo item given away at Tropicana Field.  

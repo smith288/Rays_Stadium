@@ -798,6 +798,25 @@ time_t parseMlbUtcEpoch(const char* value) {
   return static_cast<time_t>(days) * 86400 + hour * 3600 + minute * 60 + second;
 }
 
+int parseInningOrdinal(JsonVariantConst value) {
+  if (value.is<int>()) {
+    return value.as<int>();
+  }
+
+  const char* text = value.as<const char*>();
+  if (text == nullptr || text[0] == '\0') {
+    return 0;
+  }
+
+  char* end = nullptr;
+  const long parsed = strtol(text, &end, 10);
+  if (end != text) {
+    return static_cast<int>(parsed);
+  }
+
+  return 0;
+}
+
 String formatLocalTime(time_t value) {
   struct tm timeInfo;
   if (!localtime_r(&value, &timeInfo)) {
@@ -1319,10 +1338,9 @@ bool addLastGameJson(JsonDocument& response) {
   const bool isLive = response["live"] | false;
 
   if (isLive) {
-    const int currentInning = sourceLinescore["currentInningOrdinal"] | 0;
+    const int currentInning = parseInningOrdinal(sourceLinescore["currentInningOrdinal"]);
     const char* inningState = sourceLinescore["inningState"] | "";
     const bool inTopHalf = strcmp(inningState, "Top") == 0;
-    const bool betweenInnings = strcmp(inningState, "Middle") == 0 || strcmp(inningState, "End") == 0;
     const int columnCount = currentInning > 9 ? currentInning : 9;
 
     for (int inningNum = 1; inningNum <= columnCount; inningNum++) {
@@ -1336,10 +1354,12 @@ bool addLastGameJson(JsonDocument& response) {
         }
       }
 
-      const bool awayComplete =
-        inningNum < currentInning || (inningNum == currentInning && !inTopHalf);
+      const bool pastInning = inningNum < currentInning;
+      const bool currentInningActive = inningNum == currentInning;
+      const bool awayComplete = pastInning || (currentInningActive && !inTopHalf);
       const bool homeComplete =
-        inningNum < currentInning || (inningNum == currentInning && betweenInnings);
+        pastInning ||
+        (currentInningActive && !apiInning.isNull() && !apiInning["home"]["runs"].isNull());
 
       JsonObject inningOut = inningsOut.createNestedObject();
       inningOut["num"] = inningNum;
@@ -1350,7 +1370,7 @@ bool addLastGameJson(JsonDocument& response) {
         inningOut["away"] = nullptr;
       }
 
-      if (homeComplete && !apiInning.isNull() && !apiInning["home"]["runs"].isNull()) {
+      if (homeComplete && !apiInning.isNull()) {
         inningOut["home"] = apiInning["home"]["runs"] | 0;
       } else {
         inningOut["home"] = nullptr;
