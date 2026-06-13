@@ -48,6 +48,25 @@ The circuit uses low-side switching with the AO3400A MOSFET.
 - The 10kΩ resistor ensures the MOSFET stays off when the pin is floating or during boot.
 - The XIAO ESP32-C6's onboard LED (pin 15) is also used for status during setup.
 
+### Inside the Dome: Choosing Which Wire to Control
+
+The original Rays "Light Up the Dome" giveaway had a three-position switch inside the battery compartment that selected between:
+
+- Cycling RGB colors
+- Off
+- Static amber
+
+Both the cycling RGB and static amber modes are powered through **yellow wires**. You must identify and use the correct yellow wire for the mode you want. The **white wire** is ground/negative.
+
+We tapped the yellow wire for the cycling RGB lights. This gives the light a lively multi-color cycling effect whenever the controller turns it on (visible in the stadium.GIF above).
+
+**If you prefer only the static amber:**
+
+- Use a small separate power source (such as a 3×AA battery holder or a bench supply set to ~4V) to safely test and identify which yellow wire controls the cycling RGB vs. the static amber (and confirm the white wire is the negative).
+- Once you've confirmed the correct yellow wire for your desired mode, carefully snip the other yellow wire (plus any unused wires). This permanently selects only the mode you want.
+
+Work slowly and test with limited current before making any permanent cuts. Double-check polarity — we are switching the negative side through the MOSFET (Light – connects to the AO3400A Drain).
+
 ## Features
 
 - **Automatic game reaction** (Tampa Bay Rays, team ID 139)
