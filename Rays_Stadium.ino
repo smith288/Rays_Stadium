@@ -1142,8 +1142,7 @@ bool isActiveRaysGame(JsonObject game) {
   return strcmp(detailedState, "Warmup") == 0 ||
          strcmp(detailedState, "Pre-Game") == 0 ||
          strstr(detailedState, "In Progress") != nullptr ||
-         strcmp(detailedState, "Delayed Start") == 0 ||
-         strcmp(detailedState, "Scheduled") == 0;
+         strcmp(detailedState, "Delayed Start") == 0;
 }
 
 bool isFinalRaysGame(JsonObject game) {
@@ -1238,6 +1237,26 @@ bool addLastGameJson(JsonDocument& response) {
     response["status"] = selectedGame["status"]["detailedState"] | "Final";
     response["live"] = isLiveRaysGame(selectedGame) ||
                        (strstr(selectedGame["status"]["detailedState"] | "", "In Progress") != nullptr);
+
+    // If we somehow still ended up with a future scheduled game (no recent final
+    // in the window), prefer any finalGame we did find so we show a completed
+    // box score instead of a 0-0 placeholder.
+    if (!finalGame.isNull() && selectedGame == activeGame) {
+      const char* selDetailed = selectedGame["status"]["detailedState"] | "";
+      if (strcmp(selDetailed, "Scheduled") == 0) {
+        selectedGame = finalGame;
+        gamePk = selectedGame["gamePk"] | -1;
+        response["gamePk"] = gamePk;
+        response["gameDate"] = selectedGame["gameDate"] | "";
+        response["status"] = selectedGame["status"]["detailedState"] | "Final";
+        response["live"] = false;
+        response["raysHome"] = (selectedGame["teams"]["home"]["team"]["id"] | -1) == RAYS_TEAM_ID;
+
+        JsonObject teams2 = response.createNestedObject("teams");
+        addTeamJson(teams2.createNestedObject("away"), selectedGame["teams"]["away"].as<JsonObject>());
+        addTeamJson(teams2.createNestedObject("home"), selectedGame["teams"]["home"].as<JsonObject>());
+      }
+    }
     response["raysHome"] = (selectedGame["teams"]["home"]["team"]["id"] | -1) == RAYS_TEAM_ID;
 
     JsonObject teams = response.createNestedObject("teams");
@@ -1332,6 +1351,18 @@ bool addLastGameJson(JsonDocument& response) {
     return true;
   }
 
+  // Prefer detailed linescore data for final scores (fixes cases where the
+  // schedule summary does not include scores for previous-night final games).
+  {
+    JsonObject responseTeams = response["teams"];
+    if (!responseTeams.isNull()) {
+      const int lsAwayRuns = sourceLinescore["teams"]["away"]["runs"] | (responseTeams["away"]["score"] | 0);
+      const int lsHomeRuns = sourceLinescore["teams"]["home"]["runs"] | (responseTeams["home"]["score"] | 0);
+      responseTeams["away"]["score"] = lsAwayRuns;
+      responseTeams["home"]["score"] = lsHomeRuns;
+    }
+  }
+
   JsonObject lineScore = response.createNestedObject("lineScore");
   JsonArray inningsOut = lineScore.createNestedArray("innings");
   JsonArray innings = sourceLinescore["innings"].as<JsonArray>();
@@ -1390,19 +1421,21 @@ bool addLastGameJson(JsonDocument& response) {
   }
 
   JsonObject totals = lineScore.createNestedObject("totals");
-  JsonObject responseTeams = response["teams"];
-  const int awayScore = responseTeams["away"]["score"] | 0;
-  const int homeScore = responseTeams["home"]["score"] | 0;
+
+  // Use the linescore summary for authoritative final runs/hits/errors.
+  // (The main team scores were already synced above from this same source.)
+  JsonObject awayLs = sourceLinescore["teams"]["away"];
+  JsonObject homeLs = sourceLinescore["teams"]["home"];
 
   JsonObject awayTotals = totals.createNestedObject("away");
-  awayTotals["runs"] = sourceLinescore["teams"]["away"]["runs"] | awayScore;
-  awayTotals["hits"] = sourceLinescore["teams"]["away"]["hits"] | 0;
-  awayTotals["errors"] = sourceLinescore["teams"]["away"]["errors"] | 0;
+  awayTotals["runs"] = awayLs["runs"] | 0;
+  awayTotals["hits"] = awayLs["hits"] | 0;
+  awayTotals["errors"] = awayLs["errors"] | 0;
 
   JsonObject homeTotals = totals.createNestedObject("home");
-  homeTotals["runs"] = sourceLinescore["teams"]["home"]["runs"] | homeScore;
-  homeTotals["hits"] = sourceLinescore["teams"]["home"]["hits"] | 0;
-  homeTotals["errors"] = sourceLinescore["teams"]["home"]["errors"] | 0;
+  homeTotals["runs"] = homeLs["runs"] | 0;
+  homeTotals["hits"] = homeLs["hits"] | 0;
+  homeTotals["errors"] = homeLs["errors"] | 0;
 
   if (response["live"] | false) {
     JsonObject inningState = response.createNestedObject("inningState");
