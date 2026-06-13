@@ -6,7 +6,7 @@ The device runs on a Seeed Studio XIAO ESP32-C6 and drives the original 4V light
 
 ## In Action
 
-<img src="stadium.GIF" alt="Animated GIF of the hacked Tropicana Field 'Light Up the Dome' souvenir in action — the circular stadium light glowing and flashing as it celebrates a Tampa Bay Rays win or home run" width="540">
+<img src="stadium.GIF" alt="Animated GIF of the hacked Tropicana Field 'Light Up the Dome' souvenir in action, the circular stadium light glowing and flashing as it celebrates a Tampa Bay Rays win or home run" width="540">
 
 ## The Hack
 
@@ -43,7 +43,7 @@ The circuit uses low-side switching with the AO3400A MOSFET.
 | **Gate** → 10kΩ → **Source/GND**  | Gate pull-down resistor                      |
 
 **Important notes:**
-- Do **not** connect the light directly to a GPIO pin — the MOSFET handles the current.
+- Do **not** connect the light directly to a GPIO pin, the MOSFET handles the current.
 - The 100Ω resistor limits inrush/gate current.
 - The 10kΩ resistor ensures the MOSFET stays off when the pin is floating or during boot.
 - The XIAO ESP32-C6's onboard LED (pin 15) is also used for status during setup.
@@ -65,7 +65,7 @@ We tapped the yellow wire for the cycling RGB lights. This gives the light a liv
 - Use a small separate power source (such as a 3×AA battery holder or a bench supply set to ~4V) to safely test and identify which yellow wire controls the cycling RGB vs. the static amber (and confirm the white wire is the negative).
 - Once you've confirmed the correct yellow wire for your desired mode, carefully snip the other yellow wire (plus any unused wires). This permanently selects only the mode you want.
 
-Work slowly and test with limited current before making any permanent cuts. Double-check polarity — we are switching the negative side through the MOSFET (Light – connects to the AO3400A Drain).
+Work slowly and test with limited current before making any permanent cuts. Double-check polarity, we are switching the negative side through the MOSFET (Light – connects to the AO3400A Drain).
 
 ## Features
 
