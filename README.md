@@ -136,4 +136,5 @@ See [LICENSE](LICENSE) file.
 Made with love for the Tampa Bay Rays and a little 4V dome light that deserved a second life.
 
 Thank you for the support!
+
 [![Buy Me a Coffee](https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png)](https://www.buymeacoffee.com/h89j2hhgs7t)
