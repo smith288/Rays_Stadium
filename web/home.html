@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rays Last Game</title>
+<style>@@HOME_CSS@@</style>
+</head>
+<body>
+<header class="mlb-bar">Rays Stadium</header>
+<main>
+  <section class="scoreboard" aria-labelledby="page-title">
+    <div class="game-header">
+      <div id="page-title">Rays Game</div>
+      <div id="game-status">Loading</div>
+    </div>
+    <div id="content" class="state">Loading last Rays game...</div>
+    <div id="next-game" class="next-game" hidden></div>
+    <div class="light-bar">
+      <span class="light-bar-title">Stadium Light</span>
+      <div id="light-toggle" class="radio-toggle" role="radiogroup" aria-label="Stadium light">
+        <label class="radio-opt off">
+          <input type="radio" name="stadium-light" id="light-off" value="off">
+          <span>Off</span>
+        </label>
+        <label class="radio-opt on">
+          <input type="radio" name="stadium-light" id="light-on" value="on">
+          <span>On</span>
+        </label>
+      </div>
+    </div>
+  </section>
+</main>
+<script>@@HOME_JS@@</script>
+</body>
+</html>

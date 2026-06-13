@@ -1,0 +1,11 @@
+{
+  "name": "rays-stadium-web",
+  "private": true,
+  "scripts": {
+    "build:web": "python3 scripts/build_web_assets.py"
+  },
+  "devDependencies": {
+    "csso-cli": "^4.0.2",
+    "terser": "^5.43.1"
+  }
+}
