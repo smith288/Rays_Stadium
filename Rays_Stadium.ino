@@ -31,6 +31,9 @@ constexpr int WIN_FLASH_SECONDS = 20;
 constexpr int FLASH_INTERVAL_MS = 500;
 constexpr int PREGAME_LIGHT_OFF_LEAD_SECONDS = 60 * 60;
 constexpr unsigned long SETUP_LIGHT_INTERVAL_MS = 10UL * 1000UL;
+// Re-check the most recent final while waiting for today's game, so a prior
+// game that crossed midnight is reflected once it actually goes Final.
+constexpr unsigned long PREVIOUS_FINAL_RECHECK_MS = 10UL * 60UL * 1000UL;
 
 #ifndef D10
 #define D10 18
@@ -94,8 +97,8 @@ time_t backoffUntilEpoch = 0;
 int pregameLightOffGamePk = -1;
 bool pregameLightOffApplied = false;
 int previousFinalForGamePk = -1;
-bool previousFinalKnown = false;
-bool previousFinalRaysWon = false;
+int previousFinalAppliedPk = -1;
+unsigned long lastPreviousFinalCheckMs = 0;
 GameInfo latestGame;
 WebServer webServer(80);
 DNSServer dnsServer;
@@ -1024,7 +1027,8 @@ GameInfo getPreviousFinalGame(int beforeGamePk) {
 
     for (JsonObject game : games) {
       const GameInfo candidate = gameInfoFromJson(game);
-      if (candidate.hasGame && candidate.final && candidate.gamePk != beforeGamePk) {
+      if (candidate.hasGame && candidate.final && candidate.gamePk != beforeGamePk &&
+          (!previous.hasGame || candidate.startEpoch >= previous.startEpoch)) {
         previous = candidate;
       }
     }
@@ -1046,18 +1050,36 @@ void handlePregameLightBeforeCutoff(const GameInfo& game) {
 
   if (previousFinalForGamePk != game.gamePk) {
     previousFinalForGamePk = game.gamePk;
-    previousFinalKnown = false;
-    const GameInfo previous = getPreviousFinalGame(game.gamePk);
-    previousFinalKnown = previous.hasGame;
-    previousFinalRaysWon = previous.raysWon;
-    if (previousFinalKnown) {
-      setAutomaticLight(previousFinalRaysWon);
-      logMessage(
-        previousFinalRaysWon
-          ? "Previous Rays win detected; light on until pregame cutoff."
-          : "Previous Rays game was a loss; light off until today's result."
-      );
-    }
+    previousFinalAppliedPk = -1;
+    lastPreviousFinalCheckMs = 0;
+  }
+
+  // Re-check periodically: a prior game that crossed midnight may only flip to
+  // Final after we first started tracking today's game, and it would otherwise
+  // be missed (it drops out of "today's" schedule once the date rolls over).
+  const unsigned long nowMs = millis();
+  if (previousFinalAppliedPk != -1 &&
+      lastPreviousFinalCheckMs != 0 &&
+      nowMs - lastPreviousFinalCheckMs < PREVIOUS_FINAL_RECHECK_MS) {
+    return;
+  }
+  lastPreviousFinalCheckMs = nowMs;
+
+  const GameInfo previous = getPreviousFinalGame(game.gamePk);
+  if (!previous.hasGame) {
+    return;
+  }
+
+  // Only (re)apply when the most recent final game actually changes, so we
+  // don't fight a manual toggle on every poll.
+  if (previous.gamePk != previousFinalAppliedPk) {
+    previousFinalAppliedPk = previous.gamePk;
+    setAutomaticLight(previous.raysWon);
+    logMessage(
+      previous.raysWon
+        ? "Most recent Rays game was a win; light on until pregame cutoff."
+        : "Most recent Rays game was a loss; light off until today's result."
+    );
   }
 }
 
@@ -1496,7 +1518,8 @@ void resetForGameIfNeeded(const GameInfo& game) {
   lastRaysHomeRunAtBatIndex = -1;
   pregameLightOffApplied = false;
   previousFinalForGamePk = -1;
-  previousFinalKnown = false;
+  previousFinalAppliedPk = -1;
+  lastPreviousFinalCheckMs = 0;
 
   // If the device starts mid-game, ignore earlier home runs so it only flashes
   // for home runs discovered after this sketch begins watching the game.
