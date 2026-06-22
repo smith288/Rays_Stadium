@@ -29,6 +29,7 @@ constexpr unsigned long HTTP_TIMEOUT_MS = 10000UL;
 constexpr int SCORE_FLASH_SECONDS = 15;
 constexpr int WIN_FLASH_SECONDS = 20;
 constexpr int FLASH_INTERVAL_MS = 500;
+constexpr int MAX_API_FLASH_SECONDS = 120;
 constexpr int PREGAME_LIGHT_OFF_LEAD_SECONDS = 60 * 60;
 constexpr unsigned long SETUP_LIGHT_INTERVAL_MS = 10UL * 1000UL;
 // Re-check the most recent final while waiting for today's game, so a prior
@@ -113,6 +114,9 @@ bool manualLightOverride = false;
 bool otaUpdateInProgress = false;
 unsigned long manualLightExpiresAtMs = 0;
 unsigned long setupLightToggledAtMs = 0;
+unsigned long flashEndsAtMs = 0;
+unsigned long flashNextToggleAtMs = 0;
+bool flashPatternOn = false;
 String wifiSsid;
 String wifiPassword;
 
@@ -227,17 +231,53 @@ void delayWithOta(unsigned long delayMs) {
   }
 }
 
-void flashLight(int durationSeconds) {
-  const unsigned long endAt = millis() + (static_cast<unsigned long>(durationSeconds) * 1000UL);
-  bool on = false;
+bool flashLightActive() {
+  return flashEndsAtMs != 0 && static_cast<long>(millis() - flashEndsAtMs) < 0;
+}
 
-  while (millis() < endAt) {
-    on = !on;
-    setLight(on);
-    delayWithOta(FLASH_INTERVAL_MS);
+void cancelFlashLight() {
+  flashEndsAtMs = 0;
+  flashNextToggleAtMs = 0;
+}
+
+void startFlashLight(int durationSeconds) {
+  if (durationSeconds <= 0) {
+    durationSeconds = SCORE_FLASH_SECONDS;
   }
 
-  applyAutomaticLightIfAllowed();
+  cancelManualLightOverride();
+  flashEndsAtMs = millis() + static_cast<unsigned long>(durationSeconds) * 1000UL;
+  flashNextToggleAtMs = 0;
+  flashPatternOn = false;
+}
+
+void maintainFlashLight() {
+  if (!flashLightActive()) {
+    if (flashEndsAtMs != 0) {
+      flashEndsAtMs = 0;
+      flashNextToggleAtMs = 0;
+      applyAutomaticLightIfAllowed();
+    }
+    return;
+  }
+
+  const unsigned long now = millis();
+  if (flashNextToggleAtMs == 0 || now >= flashNextToggleAtMs) {
+    flashPatternOn = !flashPatternOn;
+    setLight(flashPatternOn);
+    flashNextToggleAtMs = now + FLASH_INTERVAL_MS;
+  }
+}
+
+void flashLight(int durationSeconds) {
+  startFlashLight(durationSeconds);
+  while (flashLightActive()) {
+    feedWatchdog();
+    handleOta();
+    handleWebServer();
+    maintainFlashLight();
+    delay(10);
+  }
 }
 
 void setBackoffUntil(time_t untilEpoch, const String& reason) {
@@ -311,6 +351,8 @@ void maintainTimedStates() {
     logMessage("Backoff window ended. Resuming normal API polling.");
     forceNextPollSoon();
   }
+
+  maintainFlashLight();
 }
 
 void handleOta() {
@@ -390,12 +432,20 @@ void addStatusJson(JsonDocument& document) {
   light["automaticOn"] = automaticLightOn;
   light["controlPin"] = "D4";
   light["manualOverride"] = manualLightOverride && !manualLightOverrideExpired();
+  light["flashing"] = flashLightActive();
 
   if (manualLightOverride && manualLightExpiresAtMs != 0 && !manualLightOverrideExpired()) {
     const unsigned long remainingMs = manualLightExpiresAtMs - millis();
     light["manualRemainingSeconds"] = (remainingMs + 999UL) / 1000UL;
   } else {
     light["manualRemainingSeconds"] = nullptr;
+  }
+
+  if (flashLightActive()) {
+    const unsigned long remainingMs = flashEndsAtMs - millis();
+    light["flashRemainingSeconds"] = (remainingMs + 999UL) / 1000UL;
+  } else {
+    light["flashRemainingSeconds"] = nullptr;
   }
 
   JsonObject rays = document.createNestedObject("rays");
@@ -445,12 +495,41 @@ void handleLightPutRequest() {
   DynamicJsonDocument request(256);
   const DeserializationError error = deserializeJson(request, webServer.arg("plain"));
 
-  if (error || !request["light"].is<bool>()) {
+  if (error) {
     DynamicJsonDocument response(256);
-    response["error"] = "Expected JSON body like {\"light\": true, \"duration\": 5}.";
+    response["error"] = "Invalid JSON body.";
     sendJson(response, 400);
     return;
   }
+
+  const bool wantsFlash = request["flash"].is<bool>() && request["flash"].as<bool>();
+
+  if (wantsFlash) {
+    long flashSeconds = request["seconds"] | SCORE_FLASH_SECONDS;
+    if (flashSeconds <= 0) {
+      flashSeconds = SCORE_FLASH_SECONDS;
+    } else if (flashSeconds > MAX_API_FLASH_SECONDS) {
+      flashSeconds = MAX_API_FLASH_SECONDS;
+    }
+
+    startFlashLight(static_cast<int>(flashSeconds));
+    logMessage("Manual API flash requested for " + String(flashSeconds) + " seconds.");
+
+    DynamicJsonDocument response(768);
+    addStatusJson(response);
+    sendJson(response);
+    return;
+  }
+
+  if (!request["light"].is<bool>()) {
+    DynamicJsonDocument response(256);
+    response["error"] =
+      "Expected JSON body like {\"light\": true}, {\"light\": true, \"duration\": 5}, or {\"flash\": true, \"seconds\": 15}.";
+    sendJson(response, 400);
+    return;
+  }
+
+  cancelFlashLight();
 
   const bool requestedLightOn = request["light"].as<bool>();
   const bool hasDuration = !request["duration"].isNull();
@@ -506,7 +585,7 @@ void handleNotFound() {
   }
 
   DynamicJsonDocument response(256);
-  response["error"] = "Not found. Use GET /api/status or PUT /api/light.";
+  response["error"] = "Not found. Use GET /api/status or PUT /api/light (on/off/flash).";
   sendJson(response, 404);
 }
 
