@@ -26,7 +26,7 @@ constexpr unsigned long CHECK_INTERVAL_MS = 60UL * 1000UL;
 constexpr unsigned long BACKOFF_CHECK_INTERVAL_MS = 30UL * 60UL * 1000UL;
 constexpr unsigned long WIFI_RETRY_MS = 5000UL;
 constexpr unsigned long HTTP_TIMEOUT_MS = 10000UL;
-constexpr int HOME_RUN_FLASH_SECONDS = 15;
+constexpr int SCORE_FLASH_SECONDS = 15;
 constexpr int WIN_FLASH_SECONDS = 20;
 constexpr int FLASH_INTERVAL_MS = 500;
 constexpr int PREGAME_LIGHT_OFF_LEAD_SECONDS = 60 * 60;
@@ -81,12 +81,13 @@ struct GameInfo {
 };
 
 struct ScheduleInfo {
+  bool fetchOk = false;
   GameInfo currentGame;
   GameInfo nextGame;
 };
 
 int currentGamePk = -1;
-int lastRaysHomeRunAtBatIndex = -1;
+int lastRaysRunsSeen = -1;
 bool finalHandledForCurrentGame = false;
 bool clockSynced = false;
 bool otaStarted = false;
@@ -100,6 +101,7 @@ int previousFinalForGamePk = -1;
 int previousFinalAppliedPk = -1;
 unsigned long lastPreviousFinalCheckMs = 0;
 GameInfo latestGame;
+GameInfo latestNextGame;
 WebServer webServer(80);
 DNSServer dnsServer;
 Preferences preferences;
@@ -249,28 +251,46 @@ void forceNextPollSoon() {
   lastPollMs = millis() - currentPollIntervalMs;
 }
 
-void maintainPregameLight() {
-  if (!latestGame.hasGame || latestGame.startEpoch <= 0 || apSetupMode) {
-    return;
-  }
-
-  if (latestGame.final && finalHandledForCurrentGame) {
-    return;
-  }
-
-  if (pregameLightOffGamePk != latestGame.gamePk) {
+void applyPregameLightOff(int gamePk) {
+  if (pregameLightOffGamePk != gamePk) {
     pregameLightOffApplied = false;
-    pregameLightOffGamePk = latestGame.gamePk;
+    pregameLightOffGamePk = gamePk;
+  }
+
+  if (!pregameLightOffApplied) {
+    pregameLightOffApplied = true;
+    setAutomaticLight(false);
+    logMessage("Pregame cutoff reached (1 hour before first pitch). Light off.");
+  }
+}
+
+void maintainPregameLight() {
+  if (apSetupMode) {
+    return;
+  }
+
+  time_t targetStartEpoch = 0;
+  int targetGamePk = -1;
+
+  if (latestGame.hasGame && latestGame.startEpoch > 0) {
+    if (latestGame.final && finalHandledForCurrentGame) {
+      if (!latestNextGame.hasGame || latestNextGame.startEpoch <= 0) {
+        return;
+      }
+      targetStartEpoch = latestNextGame.startEpoch;
+      targetGamePk = latestNextGame.gamePk;
+    } else {
+      targetStartEpoch = latestGame.startEpoch;
+      targetGamePk = latestGame.gamePk;
+    }
+  } else {
+    return;
   }
 
   const time_t now = time(nullptr);
-  const time_t pregameCutoff = latestGame.startEpoch - PREGAME_LIGHT_OFF_LEAD_SECONDS;
+  const time_t pregameCutoff = targetStartEpoch - PREGAME_LIGHT_OFF_LEAD_SECONDS;
   if (now >= pregameCutoff) {
-    if (!pregameLightOffApplied) {
-      pregameLightOffApplied = true;
-      setAutomaticLight(false);
-      logMessage("Pregame cutoff reached (1 hour before first pitch). Light off.");
-    }
+    applyPregameLightOff(targetGamePk);
   }
 }
 
@@ -402,9 +422,17 @@ void addStatusJson(JsonDocument& document) {
 
   if (latestGame.startEpoch > 0) {
     rays["startTime"] = formatLocalTime(latestGame.startEpoch);
+    const time_t pregameCutoff = latestGame.startEpoch - PREGAME_LIGHT_OFF_LEAD_SECONDS;
+    rays["pregameCutoff"] = formatLocalTime(pregameCutoff);
+    const time_t now = time(nullptr);
+    rays["secondsUntilPregameCutoff"] = pregameCutoff > now ? static_cast<long>(pregameCutoff - now) : 0;
   } else {
     rays["startTime"] = nullptr;
+    rays["pregameCutoff"] = nullptr;
+    rays["secondsUntilPregameCutoff"] = nullptr;
   }
+
+  rays["pregameLightOffApplied"] = pregameLightOffApplied;
 }
 
 void handleStatusRequest() {
@@ -783,17 +811,25 @@ int daysFromCivil(int year, unsigned month, unsigned day) {
 }
 
 time_t parseMlbUtcEpoch(const char* value) {
-  if (value == nullptr) {
+  if (value == nullptr || value[0] == '\0') {
     return 0;
   }
 
-  int year;
-  int month;
-  int day;
-  int hour;
-  int minute;
-  int second;
-  if (sscanf(value, "%d-%d-%dT%d:%d:%dZ", &year, &month, &day, &hour, &minute, &second) != 6) {
+  int year = 0;
+  int month = 0;
+  int day = 0;
+  int hour = 0;
+  int minute = 0;
+  int second = 0;
+
+  // Prefer sscanf without a trailing literal: some C libraries reject
+  // fractional seconds (".000Z") when the format ends with "Z".
+  if (sscanf(value, "%d-%d-%dT%d:%d:%d", &year, &month, &day, &hour, &minute, &second) != 6) {
+    return 0;
+  }
+
+  if (year < 1970 || month < 1 || month > 12 || day < 1 || day > 31 ||
+      hour < 0 || hour > 23 || minute < 0 || minute > 59 || second < 0 || second > 59) {
     return 0;
   }
 
@@ -895,7 +931,7 @@ String scheduleUrlForToday() {
   String url = String(MLB_SCHEDULE_URL);
   url += "?sportId=1&teamId=" + String(RAYS_TEAM_ID);
   url += "&date=" + today;
-  url += "&fields=dates,games,gamePk,gameDate,status,detailedState,abstractGameState,teams,home,away,team,id,isWinner,score";
+  // Request the full game object so gameDate is always present on-device.
   return url;
 }
 
@@ -917,7 +953,7 @@ GameInfo gameInfoFromJson(JsonObject game) {
 
   const char* abstractState = game["status"]["abstractGameState"] | "";
   const char* detailedState = game["status"]["detailedState"] | "";
-  const char* gameDate = game["gameDate"] | nullptr;
+  const String gameDate = game["gameDate"] | "";
 
   info.hasGame = true;
   info.gamePk = game["gamePk"] | -1;
@@ -927,7 +963,10 @@ GameInfo gameInfoFromJson(JsonObject game) {
   if (!info.live && !info.final) {
     info.live = strstr(detailedState, "In Progress") != nullptr;
   }
-  info.startEpoch = parseMlbUtcEpoch(gameDate);
+  info.startEpoch = parseMlbUtcEpoch(gameDate.c_str());
+  if (info.startEpoch <= 0 && gameDate.length() > 0) {
+    logMessage("Could not parse gameDate \"" + gameDate + "\" for game " + String(info.gamePk) + ".");
+  }
   info.detailedState = String(detailedState);
 
   const char* raysSide = raysHome ? "home" : "away";
@@ -951,6 +990,7 @@ ScheduleInfo getTodaySchedule() {
   if (!fetchJson(url, document)) {
     return schedule;
   }
+  schedule.fetchOk = true;
 
   JsonArray games = document["dates"][0]["games"].as<JsonArray>();
   if (games.isNull() || games.size() == 0) {
@@ -1045,6 +1085,7 @@ void handlePregameLightBeforeCutoff(const GameInfo& game) {
   const time_t now = time(nullptr);
   const time_t pregameCutoff = game.startEpoch - PREGAME_LIGHT_OFF_LEAD_SECONDS;
   if (now >= pregameCutoff) {
+    applyPregameLightOff(game.gamePk);
     return;
   }
 
@@ -1081,13 +1122,6 @@ void handlePregameLightBeforeCutoff(const GameInfo& game) {
         : "Most recent Rays game was a loss; light off until today's result."
     );
   }
-}
-
-String liveFeedUrl(int gamePk) {
-  String url = String(MLB_LIVE_FEED_BASE_URL);
-  url += String(gamePk);
-  url += "/feed/live?fields=liveData,plays,allPlays,about,atBatIndex,halfInning,result,event,eventType";
-  return url;
 }
 
 String liveLineScoreUrl(int gamePk) {
@@ -1477,37 +1511,6 @@ bool addLastGameJson(JsonDocument& response) {
   return true;
 }
 
-bool raysAreBattingForHalfInning(const GameInfo& game, const String& halfInning) {
-  return (game.raysHome && halfInning == "bottom") || (!game.raysHome && halfInning == "top");
-}
-
-bool isHomeRunPlay(JsonObject play) {
-  const char* eventType = play["result"]["eventType"] | "";
-  const char* event = play["result"]["event"] | "";
-  return strcmp(eventType, "home_run") == 0 || strcmp(event, "Home Run") == 0;
-}
-
-int latestRaysHomeRunAtBatIndex(const GameInfo& game) {
-  DynamicJsonDocument document(65536);
-  if (!fetchJson(liveFeedUrl(game.gamePk), document)) {
-    return lastRaysHomeRunAtBatIndex;
-  }
-
-  int latestIndex = lastRaysHomeRunAtBatIndex;
-  JsonArray plays = document["liveData"]["plays"]["allPlays"].as<JsonArray>();
-
-  for (JsonObject play : plays) {
-    const int atBatIndex = play["about"]["atBatIndex"] | -1;
-    const String halfInning = String(play["about"]["halfInning"] | "");
-
-    if (atBatIndex > latestIndex && isHomeRunPlay(play) && raysAreBattingForHalfInning(game, halfInning)) {
-      latestIndex = atBatIndex;
-    }
-  }
-
-  return latestIndex;
-}
-
 void resetForGameIfNeeded(const GameInfo& game) {
   if (!game.hasGame || game.gamePk == currentGamePk) {
     return;
@@ -1515,32 +1518,44 @@ void resetForGameIfNeeded(const GameInfo& game) {
 
   currentGamePk = game.gamePk;
   finalHandledForCurrentGame = false;
-  lastRaysHomeRunAtBatIndex = -1;
+  lastRaysRunsSeen = -1;
   pregameLightOffApplied = false;
   previousFinalForGamePk = -1;
   previousFinalAppliedPk = -1;
   lastPreviousFinalCheckMs = 0;
 
-  // If the device starts mid-game, ignore earlier home runs so it only flashes
-  // for home runs discovered after this sketch begins watching the game.
-  if (game.live) {
-    lastRaysHomeRunAtBatIndex = latestRaysHomeRunAtBatIndex(game);
+  // If the device starts mid-game, ignore runs already on the board so it only
+  // flashes for scoring discovered after this sketch begins watching the game.
+  if (game.live && game.raysScore >= 0) {
+    lastRaysRunsSeen = game.raysScore;
   }
 
   logMessage("Watching Rays game " + String(currentGamePk) + " (" + game.detailedState + ").");
 }
 
-void handleHomeRunDetection(const GameInfo& game) {
-  if (!game.live) {
+void handleRaysScoringDetection(const GameInfo& game) {
+  if (!game.live || game.raysScore < 0) {
     return;
   }
 
-  const int latestIndex = latestRaysHomeRunAtBatIndex(game);
-  if (latestIndex > lastRaysHomeRunAtBatIndex) {
-    lastRaysHomeRunAtBatIndex = latestIndex;
-    logMessage("Rays home run detected. Flashing light for 15 seconds.");
-    flashLight(HOME_RUN_FLASH_SECONDS);
+  const int currentRuns = game.raysScore;
+
+  if (lastRaysRunsSeen < 0) {
+    lastRaysRunsSeen = currentRuns;
+    return;
   }
+
+  if (currentRuns > lastRaysRunsSeen) {
+    const int runsScored = currentRuns - lastRaysRunsSeen;
+    logMessage(
+      runsScored == 1
+        ? "Rays run scored. Flashing light for 15 seconds."
+        : "Rays scored " + String(runsScored) + " runs. Flashing light for 15 seconds."
+    );
+    flashLight(SCORE_FLASH_SECONDS);
+  }
+
+  lastRaysRunsSeen = currentRuns;
 }
 
 void handleFinalResult(const GameInfo& game, const GameInfo& nextGame) {
@@ -1607,8 +1622,11 @@ void pollMlbApi() {
   }
 
   const ScheduleInfo schedule = getTodaySchedule();
+  if (schedule.fetchOk && schedule.currentGame.hasGame) {
+    latestGame = schedule.currentGame;
+    latestNextGame = schedule.nextGame;
+  }
   const GameInfo game = schedule.currentGame;
-  latestGame = game;
   if (!game.hasGame) {
     return;
   }
@@ -1617,7 +1635,7 @@ void pollMlbApi() {
   logMessage("Rays game status: " + game.detailedState);
 
   handlePregameLightBeforeCutoff(game);
-  handleHomeRunDetection(game);
+  handleRaysScoringDetection(game);
   handleFinalResult(game, schedule.nextGame);
 }
 

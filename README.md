@@ -2,11 +2,11 @@
 
 A smart, Wi-Fi-enabled controller for a hacked **Tropicana Field "Light Up the Dome"** giveaway souvenir that automatically reacts to real Tampa Bay Rays MLB games.
 
-The device runs on a Seeed Studio XIAO ESP32-C6 and drives the original 4V light using an AO3400A MOSFET. It turns the light on after Rays wins, flashes it for home runs and final wins, and turns it off before first pitch.
+The device runs on a Seeed Studio XIAO ESP32-C6 and drives the original 4V light using an AO3400A MOSFET. It turns the light on after Rays wins, flashes it when the Rays score during live play and on final wins, and turns it off before first pitch.
 
 ## In Action
 
-<img src="stadium.GIF" alt="Animated GIF of the hacked Tropicana Field 'Light Up the Dome' souvenir in action, the circular stadium light glowing and flashing as it celebrates a Tampa Bay Rays win or home run" width="540">
+<img src="stadium.GIF" alt="Animated GIF of the hacked Tropicana Field 'Light Up the Dome' souvenir in action, the circular stadium light glowing and flashing as it celebrates a Tampa Bay Rays win or run scored" width="540">
 
 ## The Hack
 
@@ -24,7 +24,7 @@ We removed the entire battery compartment and replaced it with:
 
 <img src="wiring.jpeg" alt="Real wiring photo: Seeed XIAO ESP32-C6 and AO3400A MOSFET installed inside the blue Tropicana Field Light Up the Dome souvenir" width="580">
 
-The result is a fully automatic, network-connected version of the dome light that knows when the Rays win (or hit a homer) and lights up accordingly.
+The result is a fully automatic, network-connected version of the dome light that knows when the Rays win (or score) and lights up accordingly.
 
 ## Wiring
 
@@ -71,7 +71,7 @@ Work slowly and test with limited current before making any permanent cuts. Doub
 
 - **Automatic game reaction** (Tampa Bay Rays, team ID 139)
   - Light turns on after a Rays win
-  - Brief celebratory flash on home runs
+  - Brief celebratory flash when the Rays score during a live game
   - Longer flash on final win
   - Light is forced off 1 hour before first pitch
 - **Local web interface** served directly from the device
